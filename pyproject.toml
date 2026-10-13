@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vestigium-integrity"
+version = "0.1.0"
+description = "Offline directory evidence manifests with SHA-256 and explicit incomplete-scan reporting"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+keywords = ["integrity", "forensics", "sha256", "offline", "evidence"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3",
+  "Topic :: Security",
+]
+dependencies = []
+
+[project.scripts]
+vestigium-integrity = "vestigium_integrity.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vestigium_integrity*"]
