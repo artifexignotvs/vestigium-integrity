@@ -13,6 +13,10 @@ from typing import Any
 
 SCHEMA = "vestigium-integrity/v1"
 MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+MAX_ENTRIES = 100000
+MAX_PATH_LENGTH = 4096
+MAX_PATH_DEPTH = 256
+MAX_TARGET_LENGTH = 65536
 CHUNK_SIZE = 1024 * 1024
 HEX_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 DRIVE_PREFIX = re.compile(r"[A-Za-z]:")
@@ -53,11 +57,12 @@ def canonical_json(value: Any) -> bytes:
 
 
 def valid_relative_path(value: Any) -> bool:
-    if not isinstance(value, str) or not value or "\x00" in value or "\\" in value:
+    if not isinstance(value, str) or not value or len(value) > MAX_PATH_LENGTH or "\x00" in value or "\\" in value:
         return False
     if value.startswith("/") or DRIVE_PREFIX.match(value):
         return False
-    return all(part not in ("", ".", "..") for part in value.split("/"))
+    parts = value.split("/")
+    return len(parts) <= MAX_PATH_DEPTH and all(part not in ("", ".", "..") for part in parts)
 
 
 def _signature(info: os.stat_result) -> tuple[int, ...]:
@@ -236,8 +241,8 @@ def validate_manifest(value: Any) -> dict[str, Any]:
         raise ManifestError("Manifest must contain exactly schema, algorithm, and entries.")
     if value["schema"] != SCHEMA or value["algorithm"] != "sha256":
         raise ManifestError("Unsupported manifest schema or digest algorithm.")
-    if not isinstance(value["entries"], list):
-        raise ManifestError("Manifest entries must be an array.")
+    if not isinstance(value["entries"], list) or len(value["entries"]) > MAX_ENTRIES:
+        raise ManifestError("Manifest entries must be an array with at most 100000 entries.")
     paths: dict[str, str] = {}
     for item in value["entries"]:
         if not isinstance(item, dict) or not valid_relative_path(item.get("path")):
@@ -249,7 +254,7 @@ def validate_manifest(value: Any) -> dict[str, Any]:
         if kind == "file":
             if set(item) != {"path", "type", "size", "sha256"}:
                 raise ManifestError(f"Invalid file fields for {path!r}.")
-            if type(item["size"]) is not int or item["size"] < 0:
+            if type(item["size"]) is not int or not 0 <= item["size"] <= 2**63 - 1:
                 raise ManifestError(f"Invalid file size for {path!r}.")
             if not isinstance(item["sha256"], str) or not HEX_DIGEST.fullmatch(item["sha256"]):
                 raise ManifestError(f"Invalid SHA-256 digest for {path!r}.")
@@ -259,7 +264,7 @@ def validate_manifest(value: Any) -> dict[str, Any]:
         elif kind == "symlink":
             if set(item) != {"path", "type", "target"}:
                 raise ManifestError(f"Invalid symbolic link fields for {path!r}.")
-            if not isinstance(item["target"], str) or not item["target"] or "\x00" in item["target"]:
+            if not isinstance(item["target"], str) or not item["target"] or len(item["target"]) > MAX_TARGET_LENGTH or "\x00" in item["target"]:
                 raise ManifestError(f"Invalid symbolic link target for {path!r}.")
         else:
             raise ManifestError(f"Unsupported entry type for {path!r}.")
@@ -288,7 +293,7 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
             if _signature(before) != _signature(after) or _signature(after) != _signature(current):
                 raise ManifestError("Manifest changed while being read.")
     except OSError as error:
-        raise ManifestError(f"Cannot read manifest: {error}") from error
+        raise ManifestError("Cannot read manifest as a stable regular file.") from error
     if len(data) > MAX_MANIFEST_BYTES:
         raise ManifestError("Manifest exceeds the 64 MiB size limit.")
     try:
