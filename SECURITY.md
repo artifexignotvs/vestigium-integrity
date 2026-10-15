@@ -6,8 +6,10 @@ signature, authenticity guarantee, or security certification.
 
 ## Trust boundaries
 
-- Protect the original manifest separately. Replacing both the files and the
-  reference manifest defeats this integrity check.
+- Protect the original manifest separately. Replacing both the files and an
+  unsealed reference manifest defeats this integrity check. Optional HMAC seals
+  authenticate the embedded manifest only while the separate shared key remains
+  secret. Every key holder can forge a valid seal; this does not identify an author.
 - A successful result concerns only recorded paths, regular-file bytes, sizes,
   directory presence, and symbolic-link targets. It does not authenticate
   ownership, permissions, timestamps, extended attributes, or file origins.
@@ -24,6 +26,14 @@ signature, authenticity guarantee, or security certification.
 - Reports and manifests contain filenames and link destinations, which can be
   sensitive. Inspect them before sharing. Run with only the permissions needed
   to read the selected evidence and create the external manifest.
+- Seals are not encrypted. Keep the external key out of evidence, source control,
+  reports, backups shared with untrusted parties, and public issues. Key files
+  require owner-only permissions. The process necessarily holds key bytes in
+  memory and does not guarantee their erasure.
+- `verify-seal` authenticates a bounded envelope. Only its optional `--source`
+  mode then checks filesystem content against the authenticated manifest; failed
+  authentication prevents scanning. `diff` compares only two validated manifests;
+  it neither opens recorded paths nor authenticates the provenance of either input.
 
 Unsupported filesystem objects, unreadable files, malformed manifests, and
 detected races must not produce a clean result. Reports that incorrectly claim a

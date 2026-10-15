@@ -121,6 +121,70 @@ python3 -m vestigium_integrity verify "$EVIDENCE_DIR" "$TRUSTED_MANIFEST" --json
 Preserve the command's exit code when integrating it into a pipeline. A report
 file by itself does not mean verification passed.
 
+## Compare saved manifests
+
+Version 0.2.0 can compare two existing manifests without opening either source
+directory or any path recorded inside them:
+
+```sh
+python3 -m vestigium_integrity diff baseline.json later.json --json
+```
+
+The `vestigium-diff/v1` report includes canonical manifest SHA-256 digests,
+`added`, `missing`, and `changed` entries, and before/after evidence for each
+changed entry. Input JSON whitespace and object-key order do not affect the
+digest; entry-array order is retained. A rename remains a missing path plus an
+added path. Exit **0** means recorded entries match, **1** means differences,
+and **2** means invalid input or an operation error. An offline comparison does
+not verify the current filesystem or authenticate either input manifest.
+
+## Optional shared-secret seal
+
+Use a separate, randomly generated key file to authenticate a manifest before
+storing it in a less trusted location. Keep the key outside the evidence tree and
+outside any shared repository. Generate a new 32-byte key without overwriting an
+existing file:
+
+```sh
+python3 -c 'import os; f=os.open("integrity.key", os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600); os.write(f, os.urandom(32)); os.close(f)'
+python3 -m vestigium_integrity seal baseline.json --key-file integrity.key --output baseline.seal.json --json
+python3 -m vestigium_integrity verify-seal baseline.seal.json --key-file integrity.key --json
+python3 -m vestigium_integrity verify-seal baseline.seal.json --key-file integrity.key --source /path/to/evidence --json
+```
+
+`seal` creates a new mode-0600 envelope and never overwrites a destination.
+`verify-seal` checks only the envelope by default. Add `--source` to compare a
+directory to the embedded manifest **after authentication succeeds**. An invalid
+seal never reaches the filesystem scanner. In this mode a complete match reports
+`clean` with `filesystem_verified: true`; differences report `different` and exit
+1; an incomplete scan reports `incomplete` and exits 2. Both latter outcomes leave
+`filesystem_verified: false`. The original `verify` command still accepts a
+separately trusted unsealed manifest.
+The key is supplied only by file, never as a command-line value, and is not
+stored in the envelope or report. Key files must be regular non-symlink files
+with owner-only permissions and contain 32–4,096 raw bytes. They are not decoded
+as hexadecimal or text; any newline is part of the key. The tool cannot verify
+key entropy. Use an independently generated secret and protect it separately.
+
+The exact envelope fields are `schema: "vestigium-seal/v1"`,
+`algorithm: "hmac-sha256"`, `manifest` (the unchanged version 1 manifest), and a
+lowercase 64-character `tag`. HMAC-SHA256 authenticates canonical JSON of the
+first three fields, using the manifest serializer described below, including its
+final newline. Verification uses a constant-time tag comparison. Unknown fields,
+duplicate JSON fields, unsupported algorithms, and malformed manifests are errors.
+
+**This authenticates shared-secret integrity, not a person's identity.** Any key
+holder can produce a valid seal. It is not a public-key signature, nonrepudiation,
+encryption, collection-time proof, or a chain of custody. The embedded manifest
+remains readable and may contain sensitive filenames and link targets. There is
+no key recovery, revocation service, key store, or guaranteed memory erasure.
+
+Successful operations report `sealed` or `authenticated` and exit **0**. A validly
+formed envelope with a wrong key or modified payload reports `unauthenticated`
+and exits **1**. Invalid input, permissions, unsupported platforms, and other
+operation errors exit **2**. Reports explicitly set `author_identity_verified`
+and, without `--source`, `filesystem_verified` to false after a successful operation.
+
 ## What the manifest records
 
 The schema is `vestigium-integrity/v1`. Top-level fields are exactly `schema`,
@@ -149,7 +213,10 @@ traversal components, absolute paths, empty path components, duplicate entries,
 unknown fields, unsupported schemas, missing directory ancestors, invalid
 digests, and invalid sizes are rejected during loading. Manifest paths are used
 only for comparison: the scanner walks the source independently and never opens
-a path supplied by the manifest. Manifests are limited to 64 MiB.
+a path supplied by the manifest. Manifests are limited to 64 MiB and 100,000
+entries. Relative paths are limited to 4,096 characters and 256 components;
+symbolic-link targets to 65,536 characters; file sizes to signed 64-bit nonnegative
+integers. Seal envelopes allow the manifest byte limit plus 1,024 bytes of wrapper.
 
 Timestamps, ownership, permissions, extended attributes, alternate data streams,
 resource forks, hard-link relationships, sparse-file layout, and deleted files
@@ -163,9 +230,10 @@ incomplete result rather than being opened for hashing.
 
 This is a file-integrity check, not forensic imaging, a digital signature, proof
 of origin, or a complete chain-of-custody system. If an attacker can replace both
-the files and their manifest, this tool cannot establish that anything changed.
+the files and an unsealed manifest, this tool cannot establish that anything changed.
 Protect the reference manifest independently, for example in a separately
-controlled read-only location.
+controlled read-only location. An optional HMAC seal detects manifest changes
+only while its key remains secret and uncompromised; it does not prove author identity.
 
 The scanner opens investigated files only for reading. The operating system may
 still update access times when files or directories are read. For strict evidence
